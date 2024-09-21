@@ -15,6 +15,7 @@ import net.minecraft.world.item.Item;
 import net.minecraft.world.item.ItemStack;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.Blocks;
+import net.minecraft.world.level.block.entity.BlockEntity;
 import net.minecraftforge.registries.ForgeRegistries;
 import net.querz.nbt.io.NBTUtil;
 import net.querz.nbt.tag.CompoundTag;
@@ -50,13 +51,17 @@ public class MultiblockStructure {
     private final Block centerBlock;
     private final Predicate<Item> craftingItem;
     private final List<TriConsumer<ServerLevel, BlockPos, ServerPlayer>> action;
+    private final Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate;
+    private final Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates;
 
-    public MultiblockStructure(ResourceLocation name, List<Tuple<Vec3i, Predicate<Block>>> blocks, Block centerBlock, Predicate<Item> craftingItem, List<TriConsumer<ServerLevel, BlockPos, ServerPlayer>> action) {
+    public MultiblockStructure(ResourceLocation name, List<Tuple<Vec3i, Predicate<Block>>> blocks, Block centerBlock, Predicate<Item> craftingItem, List<TriConsumer<ServerLevel, BlockPos, ServerPlayer>> action, Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate, Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates) {
         this.name = name;
         this.blocks = blocks;
         this.centerBlock = centerBlock;
         this.craftingItem = craftingItem;
         this.action = action;
+        this.centerNbtPredicate = centerNbtPredicate;
+        this.nbtPredicates = nbtPredicates;
     }
 
     public ResourceLocation getName() {
@@ -136,9 +141,47 @@ public class MultiblockStructure {
         return res;
     }
 
+    public boolean checkCenterBlockNbt(ServerLevel level, BlockPos pos) {
+        if (centerNbtPredicate == null) {
+            return true;
+        }
+        BlockEntity centerEntity = level.getBlockEntity(pos);
+        if (centerEntity != null) {
+            net.minecraft.nbt.CompoundTag nbt = centerEntity.serializeNBT();
+            return centerNbtPredicate.test(nbt);
+        }
+        return false;
+    }
+
+    public boolean checkExtraNbt(ServerLevel level, BlockPos pos, int direction) {
+        if (nbtPredicates == null || nbtPredicates.isEmpty()) {
+            return true;
+        }
+        for (Map.Entry<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> entry : nbtPredicates.entrySet()) {
+            Vec3i relativePos = entry.getKey();
+            for (int i = 0; i < direction; i++) {
+                relativePos = rotateClockwise(relativePos);
+            }
+            BlockPos targetPos = pos.offset(relativePos);
+            BlockEntity blockEntity = level.getBlockEntity(targetPos);
+            if (blockEntity == null || !entry.getValue().test(blockEntity.serializeNBT())) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     public boolean finish(ServerLevel level, BlockPos pos, ServerPlayer player, int direction) {
         if (direction < 0)
             return false;
+        if(!checkCenterBlockNbt(level, pos)) {
+            //BlockCrafting.logInfo("NBT测试未通过");
+            return false;
+        }
+        if(!checkExtraNbt(level, pos, direction)) {
+            return false;
+        }
+
         for (var blockPosPredicate : blocks) {
             var rpos = blockPosPredicate.getA();
             for (int i = 0; i < direction; i++)
@@ -209,6 +252,9 @@ public class MultiblockStructure {
         private final List<List<String>> pattern = new ArrayList<>();
         private char center;
         private final Map<Character, Predicate<Block>> dict = new HashMap<>();
+        private Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate = null;
+        private Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates = new HashMap<>();
+        Vec3i centerPos = null;
 
         public StructureBuilder(ResourceLocation name) {
             super(name);
@@ -216,6 +262,11 @@ public class MultiblockStructure {
 
         public static StructureBuilder create(ResourceLocation name) {
             return new StructureBuilder(name);
+        }
+
+        public StructureBuilder addBlockNbtCondition(Integer[] pos, Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+            this.nbtPredicates.put(new Vec3i(pos[0],pos[1],pos[2]), nbtPredicate);
+            return this;
         }
 
         public StructureBuilder pattern(String ...line) {
@@ -227,6 +278,11 @@ public class MultiblockStructure {
             this.center = ch;
             this.centerBlock = block;
             this.dict.put(ch, Predicate.isEqual(block));
+            return this;
+        }
+
+        public StructureBuilder acenterPos(int x, int y, int z) {
+            this.centerPos = new Vec3i(x,y,z);
             return this;
         }
 
@@ -274,6 +330,11 @@ public class MultiblockStructure {
             return this;
         }
 
+        public StructureBuilder centerNbtCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+            this.centerNbtPredicate = nbtPredicate;
+            return this;
+        }
+
         public MultiblockStructure build() {
             List<Tuple<Vec3i, Predicate<Block>>> blocks = new ArrayList<>();
             Vec3i centerPos = null;
@@ -285,8 +346,13 @@ public class MultiblockStructure {
                         var pos = new Vec3i(i, j, -k);
                         var ch = line.charAt(k);
                         var block = dict.get(ch);
-                        if (ch == center)
-                            centerPos = new Vec3i(i, j, -k);
+                        if(this.centerPos == null) {
+                            if (ch == center)
+                                centerPos = new Vec3i(i, j, -k);
+                        }
+                        else{
+                            centerPos = this.centerPos;
+                        }
                         blocks.add(new Tuple<>(pos, block));
                     }
                 }
@@ -301,13 +367,15 @@ public class MultiblockStructure {
                 var pos = vec3iPredicateTuple.getA();
                 vec3iPredicateTuple.setA(pos.offset(-centerX, -centerY, -centerZ));
             });
-            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action);
+            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, centerNbtPredicate,  nbtPredicates);
         }
     }
 
     public static class StructureFileBuilder extends BaseBuilder {
         private File file;
-
+        private Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate = null;
+        private Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates = new HashMap<>();
+        Vec3i centerPos = null;
         protected StructureFileBuilder(ResourceLocation name) {
             super(name);
         }
@@ -321,8 +389,19 @@ public class MultiblockStructure {
             return this;
         }
 
+
+        public StructureFileBuilder addBlockNbtCondition(Integer[] pos, Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+            this.nbtPredicates.put(new Vec3i(pos[0],pos[1],pos[2]), nbtPredicate);
+            return this;
+        }
+
         public StructureFileBuilder center(Block block) {
             this.centerBlock = block;
+            return this;
+        }
+
+        public StructureFileBuilder centerPos(int x,int y,int z) {
+            this.centerPos = new Vec3i(x,y,z);
             return this;
         }
 
@@ -356,6 +435,11 @@ public class MultiblockStructure {
             return this;
         }
 
+        public StructureFileBuilder centerNbtCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+            this.centerNbtPredicate = nbtPredicate;
+            return this;
+        }
+
         public MultiblockStructure build() throws IOException, CommandSyntaxException {
             List<Tuple<Vec3i, Predicate<Block>>> blocks = new ArrayList<>();
             Vec3i centerPos = null;
@@ -378,8 +462,13 @@ public class MultiblockStructure {
                 if (block == Blocks.AIR)
                     continue;
                 var posVec = new Vec3i(pos.get(0).asInt(), pos.get(1).asInt(), pos.get(2).asInt());
-                if (block == centerBlock)
-                    centerPos = posVec;
+                if (this.centerPos == null){
+                    if (block == centerBlock)
+                        centerPos = posVec;
+                }
+                else{
+                    centerPos = this.centerPos;
+                }
                 blocks.add(new Tuple<>(posVec, Predicate.isEqual(block)));
             }
 
@@ -393,7 +482,7 @@ public class MultiblockStructure {
                 var pos = vec3iPredicateTuple.getA();
                 vec3iPredicateTuple.setA(pos.offset(-centerX, -centerY, -centerZ));
             });
-            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action);
+            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, centerNbtPredicate, nbtPredicates);
         }
     }
 }
