@@ -267,8 +267,8 @@ public class MultiblockStructure {
         private final List<List<String>> pattern = new ArrayList<>();
         private char center;
         private final Map<Character, Predicate<Block>> dict = new HashMap<>();
-        private Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate = null;
-        private Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates = new HashMap<>();
+        private Predicate<net.minecraft.nbt.CompoundTag> centerPredicate = null;
+        private Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> blockPredicates = new HashMap<>();
         Vec3i centerPos = null;
 
         public StructureBuilder(ResourceLocation name) {
@@ -279,8 +279,8 @@ public class MultiblockStructure {
             return new StructureBuilder(name);
         }
 
-        public StructureBuilder addBlockNbtCondition(Integer[] pos, Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
-            this.nbtPredicates.put(new Vec3i(pos[0],pos[1],pos[2]), nbtPredicate);
+        public StructureBuilder addBlockCondition(Integer[] pos, Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+            this.blockPredicates.put(new Vec3i(pos[0],pos[1],pos[2]), nbtPredicate);
             return this;
         }
 
@@ -350,8 +350,8 @@ public class MultiblockStructure {
             return this;
         }
 
-        public StructureBuilder centerNbtCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
-            this.centerNbtPredicate = nbtPredicate;
+        public StructureBuilder centerBlockCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+            this.centerPredicate = nbtPredicate;
             return this;
         }
 
@@ -387,7 +387,7 @@ public class MultiblockStructure {
                 var pos = vec3iPredicateTuple.getA();
                 vec3iPredicateTuple.setA(pos.offset(-centerX, -centerY, -centerZ));
             });
-            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, preCheckAction, centerNbtPredicate, nbtPredicates);
+            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, preCheckAction, centerPredicate, blockPredicates);
         }
     }
 
@@ -410,7 +410,7 @@ public class MultiblockStructure {
         }
 
 
-        public StructureFileBuilder addBlockNbtCondition(Integer[] pos, Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+        public StructureFileBuilder addBlockCondition(Integer[] pos, Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
             this.nbtPredicates.put(new Vec3i(pos[0],pos[1],pos[2]), nbtPredicate);
             return this;
         }
@@ -460,7 +460,7 @@ public class MultiblockStructure {
             return this;
         }
 
-        public StructureFileBuilder centerNbtCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
+        public StructureFileBuilder centerBlockCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
             this.centerNbtPredicate = nbtPredicate;
             return this;
         }
