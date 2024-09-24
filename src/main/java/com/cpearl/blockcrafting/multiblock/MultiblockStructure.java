@@ -20,6 +20,7 @@ import net.minecraftforge.registries.ForgeRegistries;
 import net.querz.nbt.io.NBTUtil;
 import net.querz.nbt.tag.CompoundTag;
 import org.antlr.v4.runtime.misc.MultiMap;
+import org.apache.commons.lang3.function.TriFunction;
 import org.apache.logging.log4j.util.TriConsumer;
 
 import java.io.File;
@@ -51,15 +52,17 @@ public class MultiblockStructure {
     private final Block centerBlock;
     private final Predicate<Item> craftingItem;
     private final List<TriConsumer<ServerLevel, BlockPos, ServerPlayer>> action;
+    private final List<TriFunction<ServerLevel, BlockPos, ServerPlayer, Boolean>> preCheckAction;
     private final Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate;
     private final Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates;
 
-    public MultiblockStructure(ResourceLocation name, List<Tuple<Vec3i, Predicate<Block>>> blocks, Block centerBlock, Predicate<Item> craftingItem, List<TriConsumer<ServerLevel, BlockPos, ServerPlayer>> action, Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate, Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates) {
+    public MultiblockStructure(ResourceLocation name, List<Tuple<Vec3i, Predicate<Block>>> blocks, Block centerBlock, Predicate<Item> craftingItem, List<TriConsumer<ServerLevel, BlockPos, ServerPlayer>> action, List<TriFunction<ServerLevel, BlockPos, ServerPlayer, Boolean>> preCheckAction, Predicate<net.minecraft.nbt.CompoundTag> centerNbtPredicate, Map<Vec3i, Predicate<net.minecraft.nbt.CompoundTag>> nbtPredicates) {
         this.name = name;
         this.blocks = blocks;
         this.centerBlock = centerBlock;
         this.craftingItem = craftingItem;
         this.action = action;
+        this.preCheckAction = preCheckAction;
         this.centerNbtPredicate = centerNbtPredicate;
         this.nbtPredicates = nbtPredicates;
     }
@@ -174,20 +177,27 @@ public class MultiblockStructure {
     public boolean finish(ServerLevel level, BlockPos pos, ServerPlayer player, int direction) {
         if (direction < 0)
             return false;
+
         if(!checkCenterBlockNbt(level, pos)) {
-            //BlockCrafting.logInfo("NBT测试未通过");
             return false;
         }
         if(!checkExtraNbt(level, pos, direction)) {
             return false;
         }
 
+        for (var act : preCheckAction)
+            if(!act.apply(level, pos, player)){
+                return false;
+            }
+
+        //破坏结构
         for (var blockPosPredicate : blocks) {
             var rpos = blockPosPredicate.getA();
             for (int i = 0; i < direction; i++)
                 rpos = rotateClockwise(rpos);
             level.destroyBlock(pos.offset(rpos), false);
         }
+
         for (var act : action)
             act.accept(level, pos, player);
         return true;
@@ -198,6 +208,7 @@ public class MultiblockStructure {
         protected Block centerBlock;
         protected Predicate<Item> craftingItem;
         protected final List<TriConsumer<ServerLevel, BlockPos, ServerPlayer>> action = new ArrayList<>();
+        protected final List<TriFunction<ServerLevel, BlockPos, ServerPlayer, Boolean>> preCheckAction = new ArrayList<>();
 
         protected BaseBuilder(ResourceLocation name) {
             this.name = name;
@@ -245,6 +256,10 @@ public class MultiblockStructure {
 
         protected void addAction(TriConsumer<ServerLevel, BlockPos, ServerPlayer> ...actions) {
             action.addAll(List.of(actions));
+        }
+
+        protected void addPreCheckAction(TriFunction<ServerLevel, BlockPos, ServerPlayer, Boolean> ...actions) {
+            preCheckAction.addAll(List.of(actions));
         }
     }
 
@@ -330,6 +345,11 @@ public class MultiblockStructure {
             return this;
         }
 
+        public StructureBuilder previewAction(TriFunction<ServerLevel, BlockPos, ServerPlayer, Boolean> ...actions) {
+            addPreCheckAction(actions);
+            return this;
+        }
+
         public StructureBuilder centerNbtCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
             this.centerNbtPredicate = nbtPredicate;
             return this;
@@ -367,7 +387,7 @@ public class MultiblockStructure {
                 var pos = vec3iPredicateTuple.getA();
                 vec3iPredicateTuple.setA(pos.offset(-centerX, -centerY, -centerZ));
             });
-            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, centerNbtPredicate,  nbtPredicates);
+            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, preCheckAction, centerNbtPredicate, nbtPredicates);
         }
     }
 
@@ -435,6 +455,11 @@ public class MultiblockStructure {
             return this;
         }
 
+        public StructureFileBuilder previewAction(TriFunction<ServerLevel, BlockPos, ServerPlayer, Boolean> ...actions) {
+            addPreCheckAction(actions);
+            return this;
+        }
+
         public StructureFileBuilder centerNbtCondition(Predicate<net.minecraft.nbt.CompoundTag> nbtPredicate) {
             this.centerNbtPredicate = nbtPredicate;
             return this;
@@ -482,7 +507,7 @@ public class MultiblockStructure {
                 var pos = vec3iPredicateTuple.getA();
                 vec3iPredicateTuple.setA(pos.offset(-centerX, -centerY, -centerZ));
             });
-            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, centerNbtPredicate, nbtPredicates);
+            return new MultiblockStructure(name, blocks, centerBlock, craftingItem, action, preCheckAction, centerNbtPredicate, nbtPredicates);
         }
     }
 }
